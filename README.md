@@ -16,7 +16,7 @@ The `PIPE_PATH` directive tells the program where to create a named pipe that wi
 To update a module outside the schedule simply pass the command name into the pipe, eg.: `echo "volume" > /tmp/modbar.pipe`
 
 ## Modules
-Modules used in the preview are available for download here: https://dobrowolski.dev/download/modules.tar.gz
+Modules used in the preview are available for download here: https://dobrowolski.dev/download/modbar/modules.tar.gz
 
 Each module must reside inside the system PATH, or an absolute path has to be used.
 
