@@ -13,7 +13,7 @@ The program is configured via the config.h file. Modules are added to the modbar
 
 The `PIPE_PATH` directive tells the program where to create a named pipe that will be used to communicate with external programs. Modbar listens to the pipe in order to update a module on demand.
 
-To update a module outside the schedule simply pass the command name into the pipe, eg.: `echo "volume" > /tmp/modbar.pipe`
+To update a module outside the schedule simply pass the command name into the pipe, eg.: `echo "volume" > /var/run/user/1000/modbar.pipe`
 
 ## Modules
 Modules used in the preview are available for download here: https://dobrowolski.dev/download/modbar/modules.tar.gz
