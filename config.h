@@ -1,17 +1,17 @@
 /* Define your modules here */
 static const Module modules[] = {
     /*      COMMAND             INTERVAL    */
-    {       "weather",          1500        },
-    {       "news",             300         },
-    {       "cputemp",          5           },
-    {       "battery",          30          },
-    {       "memory",           5           },
-    {       "volume",           0           },
-    {       "clock",            1           },
+    {       "mb-weather",          1500        },
+    {       "mb-news",             300         },
+    {       "mb-cputemp",          5           },
+    {       "mb-battery",          30          },
+    {       "mb-memory",           5           },
+    {       "mb-volume",           0           },
+    {       "mb-clock",            1           },
 };
 
 /* Redefine if you want to place modbar's named pipe somewhere else */
-#define PIPE_PATH "/tmp/modbar.pipe"
+#define PIPE_PATH "/var/run/user/1000/modbar.pipe"
 
 /* Symbol to separate modules (blank if none) */
 #define SEPARATOR " | "
