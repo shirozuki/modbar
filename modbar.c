@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -14,19 +16,23 @@
 #define MAX_CMD_LEN 32
 
 typedef struct {
-        char    *command;
-        int     interval;
+        char *command;
+        int interval;
 } Module;
 
 #include "config.h"
+#define LEN(X) (sizeof(X) / sizeof((X)[0]))
 
 /* Variables */
 static Display *display = NULL;
 
-static int      modnum;
-static int      *interval = NULL;
-static char     *status = NULL;
-static char     **modstatus = NULL;
+/* Determine number of modules */
+static int modnum = sizeof(modules) / sizeof(modules[0]);
+static int interval[LEN(modules)];
+
+/* Initialize arrays */
+static char status[LEN(modules) * BUFSIZE + LEN(modules) * sizeof(SEPARATOR) + 1];
+static char modstatus[LEN(modules)][BUFSIZE];
 
 /* Statusbar modification / XSetRoot mutex and modrebuild mutex */
 pthread_mutex_t mutex0, mutex1;
@@ -44,6 +50,8 @@ void
 execute(char *command, char *output)
 {
         FILE *fp = popen(command, "r");
+	if (fp == NULL)
+		return;
         fgets(output, BUFSIZE, fp);
         pclose(fp);
 }
@@ -70,17 +78,16 @@ modrebuild(int i)
 {
         pthread_mutex_lock(&mutex1);
 
-        char *output = calloc(BUFSIZE, sizeof(char));
+	char output[BUFSIZE] = {0};
         execute(modules[i].command, output);
 
         bool found = false;
         if (strcmp(output, modstatus[i])) {
                 memset(modstatus[i], 0, strlen(modstatus[i]));
-                strncpy(modstatus[i], output, strlen(output));
+		snprintf(modstatus[i], BUFSIZE, "%s", output);
                 found = true;
         }
 
-        free(output);
         pthread_mutex_unlock(&mutex1);
 
         return found;
@@ -108,7 +115,8 @@ matchcmd(char *command)
 
 void *
 schedule(void *tid) {
-        for(bool refresh; true; sleep(1), refresh = false) {
+	(void)tid;
+        for(bool refresh = false; true; sleep(1), refresh = false) {
                 for (int i = 0; i < modnum; i++) {
                         if (interval[i] == -1) {
                                 continue;
@@ -132,6 +140,7 @@ schedule(void *tid) {
 
 void *
 npipe(void *tid) {
+	(void)tid;
         mkfifo(PIPE_PATH, 0600);
         FILE *fp = fopen(PIPE_PATH, "r+");
 
@@ -139,11 +148,11 @@ npipe(void *tid) {
         static char buffer[MAX_CMD_LEN];
 
         while(true) {
-                c = i = 0;
+		i = c = 0;
                 memset(buffer, 0, strlen(buffer));
-                while((c = fgetc(fp)) != '\n' && c != '\0' && c != ' ' && c != '\t') {
+                while((c = fgetc(fp)) != EOF && c != '\n' && c != '\0' && c != ' ' && c != '\t') {
                         if (i < MAX_CMD_LEN-1)
-                                buffer[i++] = c;
+                                buffer[i++] = (char)c;
                 }
                 buffer[i] = '\0';
                 matchcmd(buffer);
@@ -162,29 +171,18 @@ main(void)
                 return 1;
         }
 
-        /* Determine number of modules */
-        modnum          = sizeof(modules) / sizeof(modules[0]);
-
-        /* Initialize arrays */
-        status          = calloc(modnum*BUFSIZE+(modnum-2)*strlen(SEPARATOR), sizeof(char));
-
-        interval        = calloc(modnum, sizeof(int));
         for (int i = 0; i < modnum; i++)
                 interval[i] = (int) modules[i].interval-1;
 
-        modstatus       = calloc(modnum, sizeof(int*));
-        for(int i = 0; i < modnum; i++)
-                modstatus[i] = calloc(BUFSIZE, sizeof(char));
+        /* Initialize mutex locks */
+        pthread_mutex_init(&mutex0, NULL);
+        pthread_mutex_init(&mutex1, NULL);
 
         /* Build initial Statusbar */
         initsb();
 
         /* Declare threads */
         pthread_t t_schedule, t_npipe;
-
-        /* Initialize mutex locks */
-        pthread_mutex_init(&mutex0, NULL);
-        pthread_mutex_init(&mutex1, NULL);
 
         /* Create threads */
         if(pthread_create(&t_schedule, NULL, schedule, "t_schedule")) {
@@ -210,12 +208,6 @@ main(void)
                 exit(EXIT_FAILURE);
         }
 
-        /* Exit sequence */
-        for(int i = 0; i < modnum; i++)
-                free(modstatus[i]);
-        free(modstatus);
-        free(status);
-        free(interval);
         XCloseDisplay(display);
 
         return 0;
