@@ -11,7 +11,7 @@ static const Module modules[] = {
 };
 
 /* Redefine if you want to place modbar's named pipe somewhere else */
-#define PIPE_PATH "/var/run/user/1000/modbar.pipe"
+#define FIFO_PATH "/var/run/user/1000/modbar.pipe"
 
 /* Symbol to separate modules (blank if none) */
 #define SEPARATOR " | "

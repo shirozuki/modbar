@@ -5,14 +5,13 @@
 #include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
-#include <pthread.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <poll.h>
 #include <sys/stat.h>
 #include <X11/Xlib.h>
 
-/* Max command output length */
 #define BUFSIZE 128
-
-/* Max cmd length a named pipe can take */
 #define MAX_CMD_LEN 32
 
 typedef struct {
@@ -22,31 +21,14 @@ typedef struct {
 
 #include "config.h"
 #define LEN(X) (sizeof(X) / sizeof((X)[0]))
+#define MODNUM LEN(modules)
 
-/* Variables */
-static Display *display = NULL;
-
-/* Determine number of modules */
-static int modnum = sizeof(modules) / sizeof(modules[0]);
-static int interval[LEN(modules)];
-
-/* Initialize arrays */
-static char status[LEN(modules) * BUFSIZE + LEN(modules) * sizeof(SEPARATOR) + 1];
+static Display *display;
+static int interval[MODNUM];
 static char modstatus[LEN(modules)][BUFSIZE];
+static char status[MODNUM * BUFSIZE + MODNUM * sizeof(SEPARATOR) + 1];
 
-/* Statusbar modification / XSetRoot mutex and modrebuild mutex */
-pthread_mutex_t mutex0, mutex1;
-
-/* Function declarations */
-static void execute(char *, char *);
-static void refreshsb(void);
-static void initsb(void);
-static void matchcmd(char *);
-static bool modrebuild(int);
-static void *schedule(void *);
-static void *npipe(void *);
-
-void
+static void
 execute(char *command, char *output)
 {
         FILE *fp = popen(command, "r");
@@ -56,55 +38,48 @@ execute(char *command, char *output)
         pclose(fp);
 }
 
-void
+static void
 refreshsb(void)
 {
-        pthread_mutex_lock(&mutex0);
-        memset(status, 0, strlen(status));
-        for (int i = 0; i < modnum; i++) {
+	status[0] = '\0';
+        for (size_t i = 0; i < MODNUM; i++) {
                 strcat(status, modstatus[i]);
-                if(SEPARATOR[0] != '\0' && i < modnum-1) {
+                if(SEPARATOR[0] != '\0' && i < MODNUM-1) {
                         strcat(status, SEPARATOR);
                 }
         }
 
         XStoreName(display, DefaultRootWindow(display), status);
         XSync(display, False);
-        pthread_mutex_unlock(&mutex0);
 }
 
-bool
-modrebuild(int i)
+static bool
+modrebuild(size_t i)
 {
-        pthread_mutex_lock(&mutex1);
-
 	char output[BUFSIZE] = {0};
         execute(modules[i].command, output);
 
         bool found = false;
         if (strcmp(output, modstatus[i])) {
-                memset(modstatus[i], 0, strlen(modstatus[i]));
 		snprintf(modstatus[i], BUFSIZE, "%s", output);
                 found = true;
         }
 
-        pthread_mutex_unlock(&mutex1);
-
         return found;
 }
 
-void
-initsb(void)
+static void
+init(void)
 {
-        for (int i = 0; i < modnum; i++)
+        for (size_t i = 0; i < MODNUM; i++)
                 modrebuild(i);
         refreshsb();
 }
 
-void
+static void
 matchcmd(char *command)
 {
-        for (int i = 0; i < modnum; i++) {
+        for (size_t i = 0; i < MODNUM; i++) {
                 if (!strcmp(command, modules[i].command)) {
                         if(modrebuild(i)) {
                                 refreshsb();
@@ -113,101 +88,69 @@ matchcmd(char *command)
         }
 }
 
-void *
-schedule(void *tid) {
-	(void)tid;
-        for(bool refresh = false; true; sleep(1), refresh = false) {
-                for (int i = 0; i < modnum; i++) {
-                        if (interval[i] == -1) {
-                                continue;
-                        }
-                        if (interval[i] > 0) {
-                                --interval[i];
-                                continue;
-                        } else if (interval[i] == 0) {
-                                modrebuild(i) && (refresh = true);
-                                interval[i] = modules[i].interval-1;
-                        }
-                }
-                if(refresh) {
-                        refreshsb();
-                        refresh = false;
-                }
-        }
-
-        pthread_exit("t_schedule");
-}
-
-void *
-npipe(void *tid) {
-	(void)tid;
-        mkfifo(PIPE_PATH, 0600);
-        FILE *fp = fopen(PIPE_PATH, "r+");
-
-        int i, c;
-        static char buffer[MAX_CMD_LEN];
-
-        while(true) {
-		i = c = 0;
-                memset(buffer, 0, strlen(buffer));
-                while((c = fgetc(fp)) != EOF && c != '\n' && c != '\0' && c != ' ' && c != '\t') {
-                        if (i < MAX_CMD_LEN-1)
-                                buffer[i++] = (char)c;
-                }
-                buffer[i] = '\0';
-                matchcmd(buffer);
-        }
-
-        fclose(fp);
-        pthread_exit("t_npipe");
-}
-
 int
 main(void)
 {
-        /* Open X display */
         if(!(display = XOpenDisplay(NULL))) {
                 fprintf(stderr, "modbar: could not open display\n");
-                return 1;
+		exit(EXIT_FAILURE);
         }
 
-        for (int i = 0; i < modnum; i++)
-                interval[i] = (int) modules[i].interval-1;
+        if (mkfifo(FIFO_PATH, 0600) == -1) {
+		if (errno != EEXIST) {
+			perror("mkfifo");
+			exit(EXIT_FAILURE);
+		}
+	}
 
-        /* Initialize mutex locks */
-        pthread_mutex_init(&mutex0, NULL);
-        pthread_mutex_init(&mutex1, NULL);
+	int fd;
+	if ((fd = open(FIFO_PATH, O_RDWR | O_NONBLOCK)) == -1) {
+		perror("open");
+		exit(EXIT_FAILURE);
+	}
+	
+        for (size_t i = 0; i < MODNUM; i++)
+                interval[i] = (int)modules[i].interval-1;
 
-        /* Build initial Statusbar */
-        initsb();
+        init();
 
-        /* Declare threads */
-        pthread_t t_schedule, t_npipe;
+	struct pollfd pfd;
+	pfd.fd = fd;
+	pfd.events = POLLIN;
 
-        /* Create threads */
-        if(pthread_create(&t_schedule, NULL, schedule, "t_schedule")) {
-                fprintf(stderr, "modbar: pthread_create() error\n");
-                exit(EXIT_FAILURE);
-        }
+        char buffer[MAX_CMD_LEN];
 
-        if(pthread_create(&t_npipe, NULL, npipe, "t_npipe")) {
-                fprintf(stderr, "modbar: pthread_create() error\n");
-                exit(EXIT_FAILURE);
-        }
+	while (true) {
+		int prt = poll(&pfd, 1, 1000);
+		if (prt == 0) {
+			bool refresh = false;
+			for (size_t i = 0; i < MODNUM; i++) {
+				if (interval[i] == -1) {
+					continue;
+				}
+				if (interval[i] > 0) {
+					--interval[i];
+					continue;
+				} else if (interval[i] == 0) {
+					modrebuild(i) && (refresh = true);
+					interval[i] = modules[i].interval-1;
+				}
+			}
+			if(refresh) {
+				refreshsb();
+			}
+		} else if (prt > 0) {
+			ssize_t bytes = read(fd, buffer, sizeof(buffer) - 1);
+			if (bytes > 0) {
+				buffer[bytes] = '\0';
+				buffer[strcspn(buffer, "\n")] = '\0';
+				matchcmd(buffer);
 
-        /* Wait for threads to finish */
-        void *pschedule;
-        if (pthread_join(t_schedule, &pschedule)) {
-                perror("modbar: pthread_join() error");
-                exit(EXIT_FAILURE);
-        }
+			}
+		}
+	}
 
-        void *ppipe;
-        if (pthread_join(t_npipe, &ppipe)) {
-                perror("modbar: pthread_join() error");
-                exit(EXIT_FAILURE);
-        }
-
+	close(fd);
         XCloseDisplay(display);
 
         return 0;
