@@ -96,7 +96,11 @@ main(void)
 		exit(EXIT_FAILURE);
         }
 
-        if (mkfifo(FIFO_PATH, 0600) == -1) {
+	const char *pipe_path = getenv("MODBAR_PIPE_PATH");
+        if (!pipe_path)
+                pipe_path = FIFO_PATH;
+
+        if (mkfifo(pipe_path, 0600) == -1) {
 		if (errno != EEXIST) {
 			perror("mkfifo");
 			exit(EXIT_FAILURE);
@@ -104,7 +108,7 @@ main(void)
 	}
 
 	int fd;
-	if ((fd = open(FIFO_PATH, O_RDWR | O_NONBLOCK)) == -1) {
+	if ((fd = open(pipe_path, O_RDWR | O_NONBLOCK)) == -1) {
 		perror("open");
 		exit(EXIT_FAILURE);
 	}
